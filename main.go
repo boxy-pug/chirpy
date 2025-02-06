@@ -94,28 +94,26 @@ func (cfg *apiConfig) handleValidateChirp(w http.ResponseWriter, r *http.Request
 	err := decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
-		w.WriteHeader(500)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		respondWithError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	type returnVals struct {
-		Error string `json:"error, omitempty"`
-		Valid bool   `json:"valid, omitempty"`
+		Error       string `json:"error, omitempty"`
+		Valid       bool   `json:"valid, omitempty"`
+		CleanedBody string `json:"cleaned_body, omitempty"`
 	}
 
 	respBody := returnVals{}
 
 	if len(params.Body) > 140 {
 		respBody.Error = "Chirp is too long"
-		w.WriteHeader(400)
-		json.NewEncoder(w).Encode(respBody)
+		respondWithJSON(w, http.StatusBadRequest, respBody)
 		return
 	}
 
+	respBody.CleanedBody = badWordReplacement(params.Body)
 	respBody.Valid = true
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	json.NewEncoder(w).Encode(respBody)
+	respondWithJSON(w, http.StatusOK, respBody)
 }
