@@ -29,6 +29,14 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
+type Chirp struct {
+	ID        uuid.UUID     `json:"id"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Body      string        `json:"body"`
+	UserId    uuid.NullUUID `json:"user_id"`
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -57,8 +65,10 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleHealthz)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handleMetrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handleReset)
-	mux.HandleFunc("POST /api/validate_chirp", apiCfg.handleValidateChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
+	// mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -125,9 +135,10 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (cfg *apiConfig) handleValidateChirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body string `json:"body"`
+		Body   string    `json:"body"`
+		UserId uuid.UUID `json:"user_id"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
@@ -138,24 +149,28 @@ func (cfg *apiConfig) handleValidateChirp(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	type returnVals struct {
-		Error       string `json:"error, omitempty"`
-		Valid       bool   `json:"valid, omitempty"`
-		CleanedBody string `json:"cleaned_body, omitempty"`
-	}
-
-	respBody := returnVals{}
-
 	if len(params.Body) > 140 {
-		respBody.Error = "Chirp is too long"
-		respondWithJSON(w, http.StatusBadRequest, respBody)
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
 	}
 
-	respBody.CleanedBody = badWordReplacement(params.Body)
-	respBody.Valid = true
+	params.Body = badWordReplacement(params.Body)
 
-	respondWithJSON(w, http.StatusOK, respBody)
+	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: uuid.NullUUID{UUID: params.UserId, Valid: true}})
+	if err != nil {
+		log.Printf("error creating chirp: %w", err)
+		respondWithError(w, http.StatusInternalServerError, "could not create chirp")
+	}
+
+	respBody := Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserId:    dbChirp.UserID,
+	}
+
+	respondWithJSON(w, http.StatusCreated, respBody)
 }
 
 func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -183,4 +198,30 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Email:     dbUser.Email,
 	}
 	respondWithJSON(w, http.StatusCreated, userResp)
+}
+
+func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	dbChirps, err := cfg.dbQueries.GetAllChirps(r.Context())
+	if err != nil {
+		log.Printf("error getting all chirps: %w", err)
+		respondWithError(w, http.StatusInternalServerError, "could retrieve chirps")
+		return
+	}
+
+	respChirps := make([]Chirp, len(dbChirps))
+
+	for i, dbChirp := range dbChirps {
+		respChirps[i] = Chirp{
+			ID:        dbChirp.ID,
+			CreatedAt: dbChirp.CreatedAt,
+			UpdatedAt: dbChirp.UpdatedAt,
+			Body:      dbChirp.Body,
+			UserId:    dbChirp.UserID,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	json.NewEncoder(w).Encode(respChirps)
 }
