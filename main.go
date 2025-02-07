@@ -68,7 +68,7 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
-	// mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirp)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -224,4 +224,34 @@ func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusOK)
 
 	json.NewEncoder(w).Encode(respChirps)
+}
+
+func (cfg *apiConfig) handleGetChirp(w http.ResponseWriter, r *http.Request) {
+	chirpIdStr := r.PathValue("chirpID")
+
+	chirpId, err := uuid.Parse(chirpIdStr)
+	if err != nil {
+		http.Error(w, "Invalid Chirp ID", http.StatusBadRequest)
+		respondWithError(w, http.StatusInternalServerError, "couldnt parse chirp id")
+		return
+	}
+
+	dbChirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpId)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "couldnt fetch chirp")
+	}
+
+	respChirp := Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserId:    dbChirp.UserID,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	json.NewEncoder(w).Encode(respChirp)
+
 }
