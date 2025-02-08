@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/boxy-pug/chirpy/internal/auth"
 	"github.com/boxy-pug/chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -44,7 +45,7 @@ func main() {
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		log.Fatalf("error connecting to database: %w", err)
+		log.Fatalf("error connecting to database: %v", err)
 	}
 	defer db.Close()
 
@@ -69,6 +70,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirp)
+	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -128,7 +130,7 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, r *http.Request) {
 	}
 	err := cfg.dbQueries.DeleteAllUsers(r.Context())
 	if err != nil {
-		log.Printf("error deleting all users: %w", err)
+		log.Printf("error deleting all users: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "could not delete all users")
 		return
 	}
@@ -158,7 +160,7 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 
 	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: uuid.NullUUID{UUID: params.UserId, Valid: true}})
 	if err != nil {
-		log.Printf("error creating chirp: %w", err)
+		log.Printf("error creating chirp: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "could not create chirp")
 	}
 
@@ -175,20 +177,28 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 
 func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		log.Fatalf("error decoding params: %w", err)
+		log.Fatalf("error decoding params: %v", err)
 		respondWithError(w, http.StatusBadRequest, "could not decode email adress")
 	}
 
-	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), params.Email)
+	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
-		log.Printf("error creating user: %w", err)
+		log.Printf("error hashing password: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "could not hash password")
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{params.Email, hashedPassword})
+	if err != nil {
+		log.Printf("error creating user: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "could not create user")
 	}
 	userResp := User{
@@ -203,7 +213,7 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request) {
 	dbChirps, err := cfg.dbQueries.GetAllChirps(r.Context())
 	if err != nil {
-		log.Printf("error getting all chirps: %w", err)
+		log.Printf("error getting all chirps: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "could retrieve chirps")
 		return
 	}
@@ -239,6 +249,7 @@ func (cfg *apiConfig) handleGetChirp(w http.ResponseWriter, r *http.Request) {
 	dbChirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpId)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "couldnt fetch chirp")
+		return
 	}
 
 	respChirp := Chirp{
@@ -253,5 +264,61 @@ func (cfg *apiConfig) handleGetChirp(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	json.NewEncoder(w).Encode(respChirp)
+
+}
+
+func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("error decoding params: %v", err)
+		respondWithError(w, http.StatusBadRequest, "could not decode email and password")
+		return
+	}
+
+	user, err := cfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		// Check if the error is due to the user not being found
+		if err == sql.ErrNoRows {
+			respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
+			return
+		}
+		log.Printf("error retrieving user: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "could not retrieve user")
+		return
+	}
+
+	// Check if the hashed password is valid
+	err = auth.CheckPasswordHash(user.HashedPassword, params.Password) // Directly use HashedPassword
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "incorrect email or password!!")
+		return
+	}
+
+	/*
+		user, err := cfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, "incorrect email")
+			return
+		}
+		err = auth.CheckPasswordHash(user.HashedPassword, params.Password)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
+			return
+		}
+	*/
+
+	respUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	respondWithJSON(w, http.StatusOK, respUser)
 
 }
