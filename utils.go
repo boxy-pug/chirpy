@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func badWordReplacement(s string) string {
@@ -38,4 +39,12 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(payload)
+}
+
+func determineExpirationTime(exp int) time.Duration {
+	if exp > 3600 || exp < 0 {
+		return 1 * time.Hour
+	} else {
+		return time.Duration(exp) * time.Second
+	}
 }

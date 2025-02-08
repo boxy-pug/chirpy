@@ -21,6 +21,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	platform       string
+	tokenSecret    string
 }
 
 type User struct {
@@ -28,6 +29,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 type Chirp struct {
@@ -42,6 +44,7 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
+	tokenSecret := os.Getenv("JWT_SECRET")
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -54,8 +57,9 @@ func main() {
 	mux := http.NewServeMux()
 
 	apiCfg := &apiConfig{
-		dbQueries: dbQueries,
-		platform:  platform,
+		dbQueries:   dbQueries,
+		platform:    platform,
+		tokenSecret: tokenSecret,
 	}
 
 	fileServer := http.FileServer(http.Dir("."))
@@ -138,13 +142,28 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
+
+	// Step 1: Get the bearer token from the Authorization header
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "missing or invalid token")
+		return
+	}
+
+	// Step 2: Validate the token and get the user ID
+	userID, err := auth.ValidateJWT(tokenString, cfg.tokenSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+	log.Printf("UserId: %v", userID)
+
 	type parameters struct {
-		Body   string    `json:"body"`
-		UserId uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, http.StatusBadRequest, "Invalid request body")
@@ -158,7 +177,7 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 
 	params.Body = badWordReplacement(params.Body)
 
-	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: uuid.NullUUID{UUID: params.UserId, Valid: true}})
+	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: uuid.NullUUID{UUID: userID, Valid: true}})
 	if err != nil {
 		log.Printf("error creating chirp: %v", err)
 		respondWithError(w, http.StatusInternalServerError, "could not create chirp")
@@ -268,9 +287,11 @@ func (cfg *apiConfig) handleGetChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+
 	type parameters struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds *int   `json:"expires_in_seconds,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
@@ -300,24 +321,27 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	/*
-		user, err := cfg.dbQueries.GetUserByEmail(r.Context(), params.Email)
-		if err != nil {
-			respondWithError(w, http.StatusUnauthorized, "incorrect email")
-			return
-		}
-		err = auth.CheckPasswordHash(user.HashedPassword, params.Password)
-		if err != nil {
-			respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
-			return
-		}
-	*/
+	var expiresIn time.Duration
+	if params.ExpiresInSeconds == nil {
+		expiresIn = 1 * time.Hour
+	} else {
+		expiresIn = determineExpirationTime(*params.ExpiresInSeconds)
+	}
+
+	// Create JWT token
+	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret, expiresIn)
+	if err != nil {
+		log.Printf("error creating JWT: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "could not create JWT")
+		return
+	}
 
 	respUser := User{
 		ID:        user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email:     user.Email,
+		Token:     token,
 	}
 	respondWithJSON(w, http.StatusOK, respUser)
 

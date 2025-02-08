@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
@@ -80,5 +81,81 @@ func TestValidateJWT(t *testing.T) {
 	id, err = ValidateJWT(token, wrongSecret)
 	if err == nil {
 		t.Fatal("expected an error for token signed with wrong secret, got none")
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	tests := []struct {
+		name      string
+		headers   http.Header
+		expected  string
+		shouldErr bool
+	}{
+		{
+			name: "Valid token",
+			headers: http.Header{
+				"Authorization": []string{"Bearer valid_token"},
+			},
+			expected:  "valid_token",
+			shouldErr: false,
+		},
+		{
+			name:      "Missing header",
+			headers:   http.Header{},
+			expected:  "",
+			shouldErr: true,
+		},
+		{
+			name: "Invalid format - missing Bearer",
+			headers: http.Header{
+				"Authorization": []string{"InvalidToken"},
+			},
+			expected:  "",
+			shouldErr: true,
+		},
+		{
+			name: "Invalid format - extra spaces",
+			headers: http.Header{
+				"Authorization": []string{"Bearer   "},
+			},
+			expected:  "",
+			shouldErr: true,
+		},
+		{
+			name: "Invalid format - no token",
+			headers: http.Header{
+				"Authorization": []string{"Bearer "},
+			},
+			expected:  "",
+			shouldErr: true,
+		},
+		{
+			name: "Invalid format - multiple spaces",
+			headers: http.Header{
+				"Authorization": []string{"Bearer  invalid_token  "},
+			},
+			expected:  "invalid_token",
+			shouldErr: false,
+		},
+		{
+			name: "Invalid format - lower case bearer",
+			headers: http.Header{
+				"Authorization": []string{"bearer valid_token"},
+			},
+			expected:  "valid_token",
+			shouldErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := GetBearerToken(tt.headers)
+			if (err != nil) != tt.shouldErr {
+				t.Fatalf("expected error: %v, got: %v", tt.shouldErr, err)
+			}
+			if token != tt.expected {
+				t.Fatalf("expected token: %v, got: %v", tt.expected, token)
+			}
+		})
 	}
 }
