@@ -1,7 +1,10 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -24,7 +27,7 @@ func CheckPasswordHash(hash, password string) error {
 	return err
 }
 
-func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+func MakeJWT(userID uuid.UUID, tokenSecret string) (string, error) {
 
 	mySigningKey := []byte(tokenSecret)
 
@@ -33,9 +36,10 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 		// A usual scenario is to set the expiration time relative to the current time
 		Issuer:    "chirpy",
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
 		Subject:   userID.String(),
 	}
+	log.Printf("JWT Claims: %+v", claims)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	ss, err := token.SignedString(mySigningKey)
@@ -84,4 +88,18 @@ func GetBearerToken(headers http.Header) (string, error) {
 	}
 
 	return token, nil
+}
+
+func MakeRefreshToken() (string, error) {
+	c := 32
+	b := make([]byte, c)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", fmt.Errorf("error making refresh token: %w", err)
+	}
+	// The slice should now contain random bytes instead of only zeroes.
+
+	encodedStr := hex.EncodeToString(b)
+
+	return encodedStr, nil
 }

@@ -159,3 +159,22 @@ func TestGetBearerToken(t *testing.T) {
 		})
 	}
 }
+
+func TestMakeRefreshToken(t *testing.T) {
+	token, err := MakeRefreshToken()
+
+	// Check if there was an error
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Check if the token is not empty
+	if token == "" {
+		t.Fatal("expected a non-empty token")
+	}
+
+	// Check if the token length is correct (should be 64 characters for 32 bytes)
+	if len(token) != 64 {
+		t.Fatalf("expected token length of 64, got %d", len(token))
+	}
+}
