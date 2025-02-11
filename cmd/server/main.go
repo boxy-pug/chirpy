@@ -88,6 +88,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 	mux.HandleFunc("POST /api/refresh", apiCfg.handleRefresh)
 	mux.HandleFunc("POST /api/revoke", apiCfg.handleRevoke)
+	mux.HandleFunc("PUT /api/users", apiCfg.handleUpdateEmailAndPassword)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -427,4 +428,63 @@ func (cfg *apiConfig) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.RespondWithJSON(w, http.StatusNoContent, nil) // 204 No Content
+}
+
+func (cfg *apiConfig) handleUpdateEmailAndPassword(w http.ResponseWriter, r *http.Request) {
+	accessToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusUnauthorized, "could not find access token in header")
+		return
+	}
+	userID, err := auth.ValidateJWT(accessToken, cfg.tokenSecret)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusUnauthorized, "not valid jwt token")
+	}
+
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		log.Fatalf("error decoding params: %v", err)
+		utils.RespondWithError(w, http.StatusBadRequest, "could not decode email adress/password")
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		log.Printf("error hashing password: %v", err)
+		utils.RespondWithError(w, http.StatusInternalServerError, "could not hash password")
+		return
+	}
+
+	updatedUser, err := cfg.dbQueries.UpdateUser(r.Context(), database.UpdateUserParams{
+		ID:             userID,
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		utils.RespondWithError(w, http.StatusInternalServerError, "error updating user")
+		return
+	}
+
+	newJWT, err := auth.MakeJWT(userID, cfg.tokenSecret)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusInternalServerError, "error making new jwt")
+		return
+	}
+
+	respUser := User{
+		ID:        updatedUser.ID,
+		CreatedAt: updatedUser.CreatedAt,
+		UpdatedAt: updatedUser.UpdatedAt,
+		Email:     updatedUser.Email,
+		Token:     newJWT,
+	}
+
+	utils.RespondWithJSON(w, http.StatusOK, respUser)
 }
