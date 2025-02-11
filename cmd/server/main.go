@@ -89,6 +89,7 @@ func main() {
 	mux.HandleFunc("POST /api/refresh", apiCfg.handleRefresh)
 	mux.HandleFunc("POST /api/revoke", apiCfg.handleRevoke)
 	mux.HandleFunc("PUT /api/users", apiCfg.handleUpdateEmailAndPassword)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirp)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -281,7 +282,7 @@ func (cfg *apiConfig) handleGetChirp(w http.ResponseWriter, r *http.Request) {
 
 	dbChirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpId)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, "couldnt fetch chirp")
+		utils.RespondWithError(w, http.StatusNotFound, "couldnt fetch chirp")
 		return
 	}
 
@@ -487,4 +488,38 @@ func (cfg *apiConfig) handleUpdateEmailAndPassword(w http.ResponseWriter, r *htt
 	}
 
 	utils.RespondWithJSON(w, http.StatusOK, respUser)
+}
+
+func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, r *http.Request) {
+	accessToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusUnauthorized, "could not find access token in header")
+		return
+	}
+	userID, err := auth.ValidateJWT(accessToken, cfg.tokenSecret)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusUnauthorized, "not valid jwt token")
+	}
+
+	chirpIdStr := r.PathValue("chirpID")
+
+	chirpId, err := uuid.Parse(chirpIdStr)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusNotFound, "couldnt parse chirp id")
+		return
+	}
+
+	dbChirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpId)
+	if err != nil {
+		utils.RespondWithError(w, http.StatusNotFound, "couldnt fetch chirp")
+		return
+	}
+
+	if dbChirp.UserID.UUID == userID {
+		cfg.dbQueries.DeleteChirp(r.Context(), dbChirp.ID)
+		utils.RespondWithJSON(w, http.StatusNoContent, "")
+	} else {
+		utils.RespondWithError(w, http.StatusForbidden, "forbidden, wrong user access token")
+		return
+	}
 }
