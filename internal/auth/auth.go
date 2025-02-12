@@ -103,3 +103,23 @@ func MakeRefreshToken() (string, error) {
 
 	return encodedStr, nil
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	if authHeader == "" {
+		return "", fmt.Errorf("no auth header found")
+	}
+
+	parts := strings.Fields(authHeader)
+
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "apikey" {
+		return "", fmt.Errorf("error invalid jwt auth header format")
+	}
+
+	token := strings.TrimSpace(parts[1])
+	if token == "" {
+		return "", fmt.Errorf("empty token")
+	}
+
+	return token, nil
+}

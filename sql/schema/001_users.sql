@@ -8,5 +8,3 @@ CREATE TABLE users (
 
 -- +goose Down
 DROP TABLE users;
-
--- "postgres://lars@localhost:5432/chirpy"
