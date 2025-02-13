@@ -155,7 +155,6 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, r *http.Request) {
 	}
 	err := cfg.dbQueries.DeleteAllUsers(r.Context())
 	if err != nil {
-		log.Printf("error deleting all users: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not delete all users")
 		return
 	}
@@ -177,7 +176,6 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 		utils.RespondWithError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
-	log.Printf("UserId: %v", userID)
 
 	type parameters struct {
 		Body string `json:"body"`
@@ -186,7 +184,6 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 	params := parameters{}
 	err = decoder.Decode(&params)
 	if err != nil {
-		log.Printf("Error decoding parameters: %s", err)
 		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -200,7 +197,6 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 
 	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: uuid.NullUUID{UUID: userID, Valid: true}})
 	if err != nil {
-		log.Printf("error creating chirp: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not create chirp")
 	}
 
@@ -225,20 +221,17 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		log.Fatalf("error decoding params: %v", err)
 		utils.RespondWithError(w, http.StatusBadRequest, "could not decode email adress")
 	}
 
 	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
-		log.Printf("error hashing password: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not hash password")
 		return
 	}
 
 	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{params.Email, hashedPassword})
 	if err != nil {
-		log.Printf("error creating user: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not create user")
 	}
 	userResp := User{
@@ -339,7 +332,6 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	params := parameters{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		log.Printf("error decoding params: %v", err)
 		utils.RespondWithError(w, http.StatusBadRequest, "could not decode email and password")
 		return
 	}
@@ -351,7 +343,6 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 			utils.RespondWithError(w, http.StatusUnauthorized, "incorrect email or password")
 			return
 		}
-		log.Printf("error retrieving user: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not retrieve user")
 		return
 	}
@@ -366,7 +357,6 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Create JWT token
 	token, err := auth.MakeJWT(user.ID, cfg.tokenSecret)
 	if err != nil {
-		log.Printf("error creating JWT: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not create JWT")
 		return
 	}
@@ -377,10 +367,6 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, http.StatusInternalServerError, "error making refresh token")
 	}
 
-	log.Printf("Generated refresh token: %s", refreshToken)
-
-	log.Printf("Setting refresh token expiry to: %s", time.Now().Add(60*24*time.Hour))
-
 	dbRefreshToken, err := cfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
 		Token:     refreshToken,
 		UserID:    user.ID,
@@ -390,9 +376,6 @@ func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		utils.RespondWithError(w, http.StatusInternalServerError, "error creating refresh token")
 	}
-	log.Printf("dbrefreshtokens: %+v", dbRefreshToken)
-
-	log.Printf("DB-refresh-token: %s, and expiry time: %s", dbRefreshToken.Token, dbRefreshToken.ExpiresAt)
 
 	respUser := User{
 		ID:           dbRefreshToken.UserID,
@@ -413,15 +396,12 @@ func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		utils.RespondWithError(w, http.StatusBadRequest, "could not get refresh token from header")
 		return
 	}
-	log.Printf("Incoming refresh token: %s", headerRefreshToken)
 
 	dbRefreshToken, err := cfg.dbQueries.GetRefreshToken(r.Context(), headerRefreshToken)
 	if err != nil {
 		utils.RespondWithError(w, http.StatusUnauthorized, "could not find refresh token in db")
 		return
 	}
-
-	log.Printf("dbrefreshtokenfacts: %+v", dbRefreshToken)
 
 	if dbRefreshToken.ExpiresAt.Before(time.Now()) || !dbRefreshToken.RevokedAt.Time.IsZero() {
 		utils.RespondWithError(w, http.StatusUnauthorized, "refreshtoken expired")
@@ -431,11 +411,9 @@ func (cfg *apiConfig) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Create JWT token
 	token, err := auth.MakeJWT(dbRefreshToken.UserID, cfg.tokenSecret)
 	if err != nil {
-		log.Printf("error creating JWT: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not create JWT")
 		return
 	}
-	log.Printf("token!: %v", token)
 
 	utils.RespondWithJSON(w, http.StatusOK, map[string]string{"token": token})
 }
@@ -480,14 +458,12 @@ func (cfg *apiConfig) handleUpdateEmailAndPassword(w http.ResponseWriter, r *htt
 	params := parameters{}
 	err = decoder.Decode(&params)
 	if err != nil {
-		log.Fatalf("error decoding params: %v", err)
 		utils.RespondWithError(w, http.StatusBadRequest, "could not decode email adress/password")
 		return
 	}
 
 	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
-		log.Printf("error hashing password: %v", err)
 		utils.RespondWithError(w, http.StatusInternalServerError, "could not hash password")
 		return
 	}
