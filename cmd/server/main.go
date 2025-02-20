@@ -81,11 +81,15 @@ func main() {
 	fileServer := http.FileServer(http.Dir("."))
 
 	handler := http.StripPrefix("/app/", fileServer)
-
-	mux.Handle("/app/", apiCfg.middlewareMetricsInc(handler))
+	// static file serving
+	mux.HandleFunc("GET /app/", apiCfg.middlewareMetricsInc(handler).ServeHTTP)
+	// root and health check
+	mux.HandleFunc("GET /", apiCfg.handleEmptyReq)
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleHealthz)
+	// admin routes
 	mux.HandleFunc("GET /admin/metrics", apiCfg.handleMetrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.handleReset)
+	// user management and chirps
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetAllChirps)
@@ -113,6 +117,9 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 		cfg.fileserverHits.Add(1)
 		next.ServeHTTP(w, r)
 	})
+}
+func (cfg *apiConfig) handleEmptyReq(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 func (cfg *apiConfig) handleHealthz(w http.ResponseWriter, r *http.Request) {
